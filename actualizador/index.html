@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Actualizador de Inventario V5</title>
+  <title>Actualizador de Inventario V6</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     * { box-sizing: border-box; }
@@ -99,7 +99,7 @@
 <body>
 <div class="contenedor">
   <section class="panel">
-    <h1>Actualizador de inventario V5</h1>
+    <h1>Actualizador de inventario V6</h1>
     <p class="subtitulo">
       El resultado tendrá únicamente: Clave, Descripción, Categoría y Ubicación. La ubicación se toma del nombre de la hoja. Cuando una hoja no tenga Categoría, se obtiene automáticamente del nombre del archivo.
     </p>
@@ -121,6 +121,7 @@
       <div class="metrica">Hojas correctas<strong id="mHojas">0</strong></div>
       <div class="metrica">Registros generados<strong id="mRegistros">0</strong></div>
       <div class="metrica">Errores<strong id="mErrores">0</strong></div>
+      <div class="metrica">Tiempo<strong id="mTiempo">0 s</strong></div>
     </div>
   </section>
 
@@ -130,6 +131,7 @@
     <button id="descargarExcel" class="primario" disabled>Descargar Excel consolidado</button>
     <button id="descargarJson" class="primario" disabled>Descargar inventario.json</button>
     <button id="descargarErrores" class="secundario" disabled>Descargar reporte de errores</button>
+    <button id="descargarCambios" class="secundario" disabled>Descargar registro de actualización</button>
 
     <div id="errores" class="errores"></div>
 
@@ -166,10 +168,16 @@
   const mHojas = document.getElementById("mHojas");
   const mRegistros = document.getElementById("mRegistros");
   const mErrores = document.getElementById("mErrores");
+  const mTiempo = document.getElementById("mTiempo");
+  const descargarCambiosBtn = document.getElementById("descargarCambios");
 
   let registrosFinales = [];
   let erroresFinales = [];
   let resumenProceso = {};
+  let inicioProceso = 0;
+  let finProceso = 0;
+  let hojasVacias = [];
+  let archivosDanados = [];
 
   archivosInput.addEventListener("change", () => {
     const cantidad = archivosInput.files.length;
@@ -187,7 +195,15 @@
     archivosInput.value = "";
     registrosFinales = [];
     erroresFinales = [];
+    hojasVacias = [];
+    archivosDanados = [];
+    inicioProceso = performance.now();
+    finProceso = 0;
     resumenProceso = {};
+    hojasVacias = [];
+    archivosDanados = [];
+    inicioProceso = 0;
+    finProceso = 0;
 
     progreso.value = 0;
     estado.textContent = "Esperando archivos...";
@@ -196,10 +212,12 @@
     erroresDiv.style.display = "none";
 
     [mArchivos, mHojas, mRegistros, mErrores].forEach(el => el.textContent = "0");
+    mTiempo.textContent = "0 s";
     procesarBtn.disabled = true;
     descargarExcelBtn.disabled = true;
     descargarJsonBtn.disabled = true;
     descargarErroresBtn.disabled = true;
+    descargarCambiosBtn.disabled = true;
   }
 
   async function procesarArchivos() {
@@ -208,6 +226,10 @@
 
     registrosFinales = [];
     erroresFinales = [];
+    hojasVacias = [];
+    archivosDanados = [];
+    inicioProceso = performance.now();
+    finProceso = 0;
     resumenProceso = {
       archivos: archivos.length,
       hojasCorrectas: 0,
@@ -220,12 +242,16 @@
     descargarExcelBtn.disabled = true;
     descargarJsonBtn.disabled = true;
     descargarErroresBtn.disabled = true;
+    descargarCambiosBtn.disabled = true;
     vistaPrevia.innerHTML = "";
     erroresDiv.innerHTML = "";
     erroresDiv.style.display = "none";
 
-    progreso.max = archivos.length;
+    progreso.max = 100;
     progreso.value = 0;
+
+    let totalHojasEstimadas = 0;
+    let hojasProcesadasGlobal = 0;
 
     for (let i = 0; i < archivos.length; i++) {
       const archivo = archivos[i];
@@ -241,9 +267,17 @@
           cellDates: false
         });
 
+        totalHojasEstimadas += workbook.SheetNames.length;
+
         for (const nombreHoja of workbook.SheetNames) {
+          estado.textContent =
+            `Archivo ${i + 1} de ${archivos.length}: ${archivo.name}\n` +
+            `Hoja: ${nombreHoja}\n` +
+            `Registros generados: ${registrosFinales.length.toLocaleString("es-MX")}`;
           if (debeOmitirHoja(nombreHoja)) {
             resumenProceso.hojasOmitidas++;
+            hojasProcesadasGlobal++;
+            actualizarProgresoReal(hojasProcesadasGlobal, totalHojasEstimadas);
             continue;
           }
 
@@ -255,6 +289,18 @@
               raw: false,
               blankrows: false
             });
+
+            if (!filas.length || filas.every(fila => !fila.some(valor => String(valor ?? "").trim()))) {
+              hojasVacias.push({
+                archivo: archivo.name,
+                hoja: nombreHoja,
+                motivo: "Hoja vacía"
+              });
+              resumenProceso.hojasOmitidas++;
+              hojasProcesadasGlobal++;
+              actualizarProgresoReal(hojasProcesadasGlobal, totalHojasEstimadas);
+              continue;
+            }
 
             const resultado = procesarHoja(filas, archivo.name, nombreHoja);
 
@@ -270,6 +316,8 @@
             resumenProceso.hojasCorrectas++;
             resumenProceso.filasOrigen += resultado.filasOrigen;
             resumenProceso.filasAdicionales += resultado.filasAdicionales;
+            hojasProcesadasGlobal++;
+            actualizarProgresoReal(hojasProcesadasGlobal, totalHojasEstimadas);
 
           } catch (errorHoja) {
             erroresFinales.push({
@@ -277,20 +325,29 @@
               hoja: nombreHoja,
               motivo: errorHoja.message || "Error al procesar la hoja"
             });
+            hojasProcesadasGlobal++;
+            actualizarProgresoReal(hojasProcesadasGlobal, totalHojasEstimadas);
           }
         }
       } catch (errorArchivo) {
-        erroresFinales.push({
+        const detalle = {
           archivo: archivo.name,
           hoja: "",
           motivo: errorArchivo.message || "No fue posible leer el archivo"
-        });
+        };
+        erroresFinales.push(detalle);
+        archivosDanados.push(detalle);
       }
 
-      progreso.value = i + 1;
+      actualizarProgresoReal(hojasProcesadasGlobal, totalHojasEstimadas);
       actualizarMetricas();
       await new Promise(resolve => setTimeout(resolve, 20));
     }
+
+    finProceso = performance.now();
+    const segundosTotales = Math.max(0, (finProceso - inicioProceso) / 1000);
+    mTiempo.textContent = formatearTiempo(segundosTotales);
+    progreso.value = 100;
 
     estado.textContent =
       `Proceso terminado.\n` +
@@ -302,7 +359,11 @@
 
     descargarExcelBtn.disabled = registrosFinales.length === 0;
     descargarJsonBtn.disabled = registrosFinales.length === 0;
-    descargarErroresBtn.disabled = erroresFinales.length === 0;
+    descargarErroresBtn.disabled =
+      erroresFinales.length === 0 &&
+      hojasVacias.length === 0 &&
+      archivosDanados.length === 0;
+    descargarCambiosBtn.disabled = false;
     procesarBtn.disabled = false;
   }
 
@@ -535,10 +596,27 @@
     return Math.min(numero, 10000);
   }
 
+  function actualizarProgresoReal(procesadas, total) {
+    if (!total || total < 1) return;
+    progreso.value = Math.min(99, Math.round((procesadas / total) * 100));
+  }
+
+  function formatearTiempo(segundos) {
+    if (segundos < 60) return `${segundos.toFixed(1)} s`;
+    const minutos = Math.floor(segundos / 60);
+    const resto = Math.round(segundos % 60);
+    return `${minutos} min ${resto} s`;
+  }
+
   function actualizarMetricas() {
     mHojas.textContent = resumenProceso.hojasCorrectas.toLocaleString("es-MX");
     mRegistros.textContent = registrosFinales.length.toLocaleString("es-MX");
-    mErrores.textContent = erroresFinales.length.toLocaleString("es-MX");
+    mErrores.textContent =
+      (erroresFinales.length + hojasVacias.length).toLocaleString("es-MX");
+
+    if (inicioProceso && !finProceso) {
+      mTiempo.textContent = formatearTiempo((performance.now() - inicioProceso) / 1000);
+    }
   }
 
   function mostrarVistaPrevia() {
@@ -602,7 +680,11 @@
       ["Filas de productos originales", resumenProceso.filasOrigen],
       ["Filas adicionales por cantidades", resumenProceso.filasAdicionales],
       ["Registros finales", registrosFinales.length],
-      ["Errores detectados", erroresFinales.length]
+      ["Hojas vacías", hojasVacias.length],
+      ["Archivos dañados", archivosDanados.length],
+      ["Errores detectados", erroresFinales.length],
+      ["Duplicados", "Conservados sin modificación"],
+      ["Tiempo total", mTiempo.textContent]
     ]);
 
     const libro = XLSX.utils.book_new();
@@ -621,7 +703,13 @@
   });
 
   descargarErroresBtn.addEventListener("click", () => {
-    const hoja = XLSX.utils.json_to_sheet(erroresFinales);
+    const reporteCompleto = [
+      ...erroresFinales.map(item => ({ Tipo: "Hoja no reconocida", ...item })),
+      ...hojasVacias.map(item => ({ Tipo: "Hoja vacía", ...item })),
+      ...archivosDanados.map(item => ({ Tipo: "Archivo dañado", ...item }))
+    ];
+
+    const hoja = XLSX.utils.json_to_sheet(reporteCompleto);
     hoja["!cols"] = [
       { wch: 45 },
       { wch: 20 },
@@ -631,6 +719,32 @@
     const libro = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(libro, hoja, "Errores");
     XLSX.writeFile(libro, "Reporte_Errores.xlsx");
+  });
+
+  descargarCambiosBtn.addEventListener("click", () => {
+    const fecha = new Date();
+
+    const registro = [
+      ["Concepto", "Resultado"],
+      ["Fecha de actualización", fecha.toLocaleString("es-MX")],
+      ["Archivos seleccionados", resumenProceso.archivos || 0],
+      ["Hojas reconocidas", resumenProceso.hojasCorrectas || 0],
+      ["Hojas omitidas", resumenProceso.hojasOmitidas || 0],
+      ["Hojas vacías", hojasVacias.length],
+      ["Archivos dañados", archivosDanados.length],
+      ["Registros originales", resumenProceso.filasOrigen || 0],
+      ["Filas adicionales por cantidades", resumenProceso.filasAdicionales || 0],
+      ["Registros finales", registrosFinales.length],
+      ["Duplicados", "Conservados sin modificación"],
+      ["Tiempo total", mTiempo.textContent]
+    ];
+
+    const hoja = XLSX.utils.aoa_to_sheet(registro);
+    hoja["!cols"] = [{ wch: 38 }, { wch: 30 }];
+
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, "Registro actualización");
+    XLSX.writeFile(libro, "Registro_Actualizacion.xlsx");
   });
 
   function descargarArchivo(nombre, contenido, tipo) {
