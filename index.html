@@ -154,6 +154,7 @@
         <tr>
           <th>Clave</th>
           <th>Descripción</th>
+          <th>Categoría</th>
           <th>Ubicación</th>
         </tr>
       </thead>
@@ -283,12 +284,18 @@
         celdaDescripcion.textContent =
           producto.Descripción || "";
 
+        const celdaCategoria = document.createElement("td");
+        celdaCategoria.textContent =
+          producto.Categoría || "";
+
         const celdaUbicacion = document.createElement("td");
         celdaUbicacion.textContent =
           producto.Ubicación || "";
+  
 
         fila.appendChild(celdaClave);
         fila.appendChild(celdaDescripcion);
+        fila.appendChild(celdaCategoria);
         fila.appendChild(celdaUbicacion);
 
         fragmento.appendChild(fila);
@@ -348,11 +355,14 @@
             normalizarTexto(producto.Descripción);
           const ubicacion =
             normalizarTexto(producto.Ubicación);
+          const categoria =
+            normalizarTexto(producto.Categoría)
 
           return (
             clave.includes(texto) ||
             descripcion.includes(texto) ||
-            ubicacion.includes(texto)
+            ubicacion.includes(texto) ||
+            categoria.includes(texto)
           );
         });
 
